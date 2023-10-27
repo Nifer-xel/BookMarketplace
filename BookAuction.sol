@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./BookListing.sol";
+import "./IBookStore.sol";
 
 contract BookAuction is BookListing {
     struct Auction {
@@ -14,14 +15,21 @@ contract BookAuction is BookListing {
 
     mapping(uint256 => Auction) public auctions;
 
+    event AuctionStarted(uint256 bookId, uint256 duration, uint256 startPrice);
+    event BidPlaced(uint256 bookId, address bidder, uint256 bidAmount);
+    event AuctionEnded(uint256 bookId, address winner, uint256 winningBid);
+
+    constructor(address _bookStoreAddress) BookListing(_bookStoreAddress) {
+    }
+
     function startAuction(
         uint256 bookId,
         uint256 durationInHours,
         uint256 startPriceInEth
     ) external {
-        require(ownerOf(bookId) == msg.sender, "You are not the owner of this book");
-        Book storage book = books[bookId];
-        require(book.price > 0, "Book not listed for sale");
+        require(bookStore.ownerOf(bookId) == msg.sender, "You are not the owner of this book");
+        Listing memory listing = listings[bookId];
+        require(listing.price > 0, "Book not listed for sale");
 
         auctions[bookId] = Auction({
             auctionEndTime: block.timestamp + durationInHours * 1 hours,
@@ -30,13 +38,15 @@ contract BookAuction is BookListing {
             startPrice: startPriceInEth * 1e18,
             auctionEnded: false
         });
+
+        emit AuctionStarted(bookId, durationInHours, startPriceInEth);
     }
 
     function bid(uint256 bookId) external payable {
         Auction storage auction = auctions[bookId];
-        Book storage book = books[bookId];
+        Listing memory listing = listings[bookId];
 
-        require(book.price > 0, "Book not listed for sale");
+        require(listing.price > 0, "Book not listed for sale");
         require(block.timestamp < auction.auctionEndTime, "Auction already ended");
         require(msg.value > auction.highestBid, "There already is a higher bid");
         require(msg.value >= auction.startPrice, "Bid is lower than the start price");
@@ -47,47 +57,32 @@ contract BookAuction is BookListing {
 
         auction.highestBidder = msg.sender;
         auction.highestBid = msg.value;
-    }
 
-    function auctionEndTime(uint256 bookId) external view returns (uint256) {
-        Auction storage auction = auctions[bookId];
-
-        if (auction.auctionEndTime == 0 || block.timestamp > auction.auctionEndTime) {
-            return 0;
-        }
-        return (auction.auctionEndTime - block.timestamp) / 60;
+        emit BidPlaced(bookId, msg.sender, msg.value);
     }
 
     function endAuction(uint256 bookId) external {
         Auction storage auction = auctions[bookId];
-        Book storage book = books[bookId];
+        Listing memory listing = listings[bookId];
 
         require(
-            ownerOf(bookId) == msg.sender || block.timestamp >= auction.auctionEndTime,
+            bookStore.ownerOf(bookId) == msg.sender || block.timestamp >= auction.auctionEndTime,
             "Only owner can end auction early"
         );
-        require(book.price > 0, "Book not listed for sale");
+        require(listing.price > 0, "Book not listed for sale");
         require(!auction.auctionEnded, "Auction already ended");
 
         auction.auctionEnded = true;
-        book.price = 0;
+        listing.price = 0;
 
         if (auction.highestBidder != address(0)) {
-            uint256 royaltyAmount = (auction.highestBid * book.royaltyPercentage) / 100;
-            _makePayment(msg.sender, auction.highestBid - royaltyAmount);
-            _makePayment(book.originalSeller, royaltyAmount);
+            uint256 royalty = bookStore.getRoyalty(bookId);
+            uint256 sellerAmount = auction.highestBid - royalty;
+            address originalSeller = bookStore.getOriginalSeller(bookId);
+            payable(originalSeller).transfer(royalty);
+            payable(listing.seller).transfer(sellerAmount);
 
-            _bookIds.increment();
-            uint256 newBookId = _bookIds.current();
-            _mint(auction.highestBidder, newBookId);
-            books[newBookId] = Book({
-                title: book.title,
-                price: 0,
-                coverHash: book.coverHash,
-                contentHash: book.contentHash,
-                originalSeller: book.originalSeller,
-                royaltyPercentage: book.royaltyPercentage
-            });
+            emit AuctionEnded(bookId, auction.highestBidder, auction.highestBid);
         }
     }
 }
