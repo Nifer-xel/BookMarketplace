@@ -2,17 +2,17 @@
 pragma solidity ^0.8.0;
 
 interface IBookStore {
-    function makePayment(address seller, uint256 amount) external;
     function owner() external view returns (address);
     function ownerOf(uint256 tokenId) external view returns (address);
     function withdraw() external;
     function listBook(
-        string memory title,
-        uint256 priceInEth,
-        string memory coverHash,
-        string memory contentHash,
-        uint8 royaltyPercentage
-    ) external returns (uint256);
+    string memory title, 
+    uint256 priceInEth, 
+    string memory coverHash, 
+    string memory contentHash, 
+    uint8 royaltyPercentage
+) external returns (uint256);  // добавлен возвращаемый тип
+
 
     function safeTransferFrom(
         address from,
